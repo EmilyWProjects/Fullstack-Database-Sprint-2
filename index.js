@@ -38,42 +38,138 @@ app.ws('/ws', (socket, request) => {
     });
 });
 
+//Homepage render
 app.get('/', async (request, response) => {
     if (request.session.user?.id) {
         return response.redirect('/dashboard');
     }
-
-    response.render('index/unauthenticatedIndex', {});
+    try {
+        // Get the total number of polls in the database
+        const pollCount = await Poll.countDocuments();
+        
+        // Render the index page and pass the poll count
+        response.render('index/unauthenticatedIndex', { pollCount });
+    } catch (error) {
+        console.error('Error fetching poll count:', error);
+        response.status(500).json({ errorMessage: 'Error fetching poll count' });
+    }
 });
 
+
+//Login render
 app.get('/login', async (request, response) => {
-    
+  if (request.session.user?.id) return response.redirect("/dashboard"); 
+  return response.render("login", { errorMessage: null, session: request.session }); 
 });
 
+
+//Login submission
 app.post('/login', async (request, response) => {
-    
+    const { username, password } = request.body;
+    try {
+      //Validate username
+      const user = await User.findOne({ username });
+      if (!user) {
+        return response.render("login", {
+            errorMessage: "Invalid username or password",
+            session: request.session,
+        });
+      }
+      //Validate password
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) {
+        return response.status(400).json({ errorMessage: 'Invalid username or password!' });
+      }
+      //Stores session 
+      request.session.user = { id: user.id, username: user.username };
+      response.redirect("/dashboard");
+      
+    } catch (error) {
+      response.status(500).json({ errorMessage: 'Login error!' });
+    }
 });
 
+
+//Logout and destroy session
+app.get("/logout", (request, response) => {
+    request.session.destroy(() => {
+        response.redirect("/");
+    });
+});
+
+
+//Signup render
 app.get('/signup', async (request, response) => {
     if (request.session.user?.id) {
         return response.redirect('/dashboard');
     }
-
     return response.render('signup', { errorMessage: null });
 });
 
+
+//Signup submission
+app.post('/signup', async (request, response) => {
+    const { username, password } = request.body;
+    try {
+      //Validate user
+      const existingUser = await User.findOne({ username });
+      if (existingUser) {
+        return response.status(400).json({ errorMessage: 'Username unavailable!' });
+      }
+      //Create user
+      const hashedPassword = bcrypt.hashSync(password, SALT_ROUNDS);
+      const user = new User({ username, password: hashedPassword });
+      await user.save();
+      //Stores session 
+      request.session.user = { id: user.id, username: user.username };
+      response.redirect("/dashboard");
+
+    } catch (error) {
+      response.status(500).json({ errorMessage: 'Registration error!' });
+    }
+});
+
+
+//Dashboard render
 app.get('/dashboard', async (request, response) => {
+    //Only authenticated users
     if (!request.session.user?.id) {
         return response.redirect('/');
     }
-
-    //TODO: Fix the polls, this should contain all polls that are active. I'd recommend taking a look at the
-    //authenticatedIndex template to see how it expects polls to be represented
-    return response.render('index/authenticatedIndex', { polls: [] });
+    //Get polls
+    try {
+        const polls = await Poll.find();
+        return response.render('index/authenticatedIndex', { polls, user: request.session.user });
+    } catch (error) {
+        console.error('Error fetching polls:', error);
+        response.status(500).json({ errorMessage: 'Error fetching polls.' });
+    }
 });
 
+
+//Profile render
 app.get('/profile', async (request, response) => {
-    
+    //Only authenticated users
+    if (!request.session.user?.id) {
+        return response.redirect('/'); 
+    }
+    const userId = request.session.user.id; 
+    //Get profile information
+    try {
+        const user = await User.findById(userId);
+        if (!user) {
+            return response.status(404).send('User not found');
+        }
+        //Count polls
+        const votedPollsCount = await Poll.countDocuments({ voters: userId });
+        response.render('profile', {
+            username: user.username, 
+            votedPollsCount: votedPollsCount 
+        });
+    } catch (error) {
+        console.error('Error fetching profile data:', error);
+        response.status(500).json({ errorMessage: 'Error fetching profile data' });
+    }
 });
 
 app.get('/createPoll', async (request, response) => {
