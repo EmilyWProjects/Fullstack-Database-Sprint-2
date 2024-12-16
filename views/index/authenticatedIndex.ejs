@@ -1,14 +1,18 @@
-<!-- TODO: Header? -->
+<script>
+    const userId = "<%= user.id %>";   // Access the user ID from the session
+</script>
+<%- include('../partials/header') %>
 <div class="main-content">
     <h1>Active Polls</h1>
     <!-- This is an example of how you can render the polls on the page, you're welcome to keep it or change it if you wish. This page isn't fully complete though -->
+    <% if (polls.length > 0) { %>
     <ul id="polls">
         <% polls.forEach((poll) => { %>
-            <li class="poll-container" id="<%= poll.id %>">
+            <li class="poll-container" id="<%= poll._id %>">
                 <h2><%= poll.question %></h2>
                 <ul class="poll-options">
                     <% for (let {answer, votes } of poll.options) { %>
-                        <li id="<%= poll.id %>_<%= answer %>">
+                        <li id="<%= poll._id %>_<%= answer %>">
                             <strong><%= answer %>:</strong> <%= votes %> votes
                         </li>
                     <% } %>
@@ -19,11 +23,14 @@
                             Vote for <%= answer %>
                         </button>
                     <% } %>
-                    <input type="text" style="display: none;" value="<%= poll.id %>" name="poll-id"/>
+                    <input type="hidden" value="<%= poll._id %>" name="poll-id"/>
                 </form>
             </li>
         <% }) %>
     </ul>
+    <% } else { %>
+        <p>No active polls.</p>
+    <% } %>
 </div>
 <script src="/frontend.js" type="application/javascript"></script>
 </body>

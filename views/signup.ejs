@@ -1,8 +1,9 @@
-<!-- TODO: Header? -->
-
+<%- include('partials/header') %>
+ 
+<body>
 <div class="main-content">
     <h1>Sign Up</h1>
-    <form action="/signup" method="post" style="width: 300px;">
+    <form action="/signup" method="POST" style="width: 300px;">
         <% if (errorMessage) { %>
             <p class="error-message"><%= errorMessage %></p>
         <% } %>
