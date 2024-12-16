@@ -8,7 +8,16 @@ body {
     color: #F6F6F6;
     flex-direction: column;
 }
-
+.header-content {
+    display: flex;
+    justify-content: center;
+    flex: 1;
+    align-items: center;
+    flex-direction: column;
+    font-family: 'Lato', sans-serif;
+    background-color: #F6F6F6;
+    font-size: 15pt;
+}
 .main-content {
     display: flex;
     justify-content: center;
