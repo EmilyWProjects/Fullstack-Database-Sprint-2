@@ -1,16 +1,42 @@
+//App requirements
 const express = require('express');
 const expressWs = require('express-ws');
 const path = require('path');
 const mongoose = require('mongoose');
 const session = require('express-session');
 const bcrypt = require('bcrypt');
-
 const PORT = 3000;
-//TODO: Update this URI to match your own MongoDB setup
-const MONGO_URI = 'mongodb://localhost:27017/keyin_test';
+const SALT_ROUNDS = 10;
 const app = express();
-expressWs(app);
 
+
+//MongoDB information
+const MONGO_URI = 'mongodb://localhost:27017/fullstack-database-sprint';
+
+
+//Users
+const userSchema = new mongoose.Schema({
+    username: { type: String, required: true, unique: true },
+    password: { type: String, required: true }
+});
+const User = mongoose.model('User', userSchema);
+
+
+//Polls
+const pollSchema = new mongoose.Schema({
+    question: { type: String, required: true },
+    options: [{ 
+        answer: { type: String }, 
+        votes: { type: Number, default: 0 } 
+    }],
+    voters: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+});
+const Poll = mongoose.model('Poll', pollSchema);
+
+
+//Environment setup
+expressWs(app);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -20,23 +46,63 @@ app.use(session({
     secret: 'voting-app-secret',
     resave: false,
     saveUninitialized: false,
+    cookie: { secure: false }
 }));
 let connectedClients = [];
 
-//Note: Not all routes you need are present here, some are missing and you'll need to add them yourself.
 
+//Websocket connection
 app.ws('/ws', (socket, request) => {
     connectedClients.push(socket);
 
-    socket.on('message', async (message) => {
+    socket.on("message", async (message) => {
         const data = JSON.parse(message);
-        
+    
+        // Handle incoming vote events
+        if (data.event === "new-vote") {
+            const { pollId, selectedOption, userId } = data.data;
+            await onNewVote(pollId, selectedOption, userId); 
+        }
     });
-
+    //Close the socket
     socket.on('close', async (message) => {
-        
+        connectedClients = connectedClients.filter(client => client !== socket);
     });
 });
+
+
+//Process new votes
+async function onNewVote(pollId, selectedOption, userId) {
+  try {
+    const poll = await Poll.findById(pollId);
+    const user = await User.findById(userId);
+
+    if (!poll || !user) return;
+
+    const option = poll.options.find((opt) => opt.answer === selectedOption);
+    if (option) {
+        option.votes++;
+        await poll.save();
+
+        // Track that this user voted on this poll
+        poll.voters.push(userId);
+        await poll.save();
+
+      // Broadcast updated poll results to all connected clients
+        for (const client of connectedClients) {
+            client.send(
+                JSON.stringify({
+                    event: "voteUpdate",
+                    data: { pollId: poll._id, options: poll.options },
+                })
+            );
+        }
+    }
+  } catch (error) {
+    console.error("Error updating poll:", error);
+  }
+}
+
 
 //Homepage render
 app.get('/', async (request, response) => {
@@ -172,27 +238,49 @@ app.get('/profile', async (request, response) => {
     }
 });
 
+
+//Create poll render
 app.get('/createPoll', async (request, response) => {
     if (!request.session.user?.id) {
         return response.redirect('/');
     }
 
-    return response.render('createPoll')
+    return response.render("createPoll", { session: request.session });
 });
 
-// Poll creation
+
+//Create poll submission
 app.post('/createPoll', async (request, response) => {
+    //Only authenticated users
+    if (!request.session.user?.id) {
+        return response.redirect("/");
+    }
+    //Create poll
     const { question, options } = request.body;
-    const formattedOptions = Object.values(options).map((option) => ({ answer: option, votes: 0 }));
+    const formattedOptions = Object.values(options).map((option) => ({
+        answer: option,
+        votes: 0,
+    }));
+    //Validate poll
+    const pollCreationError = await onCreateNewPoll(
+        question,
+        formattedOptions,
+        request.session.user.id
+    );
+    if (pollCreationError) {
+        return response.render("createPoll", {
+          errorMessage: pollCreationError,
+          session: request.session,
+        });
+    }
+    return response.redirect("/dashboard");
 
-    const pollCreationError = onCreateNewPoll(question, formattedOptions);
-    //TODO: If an error occurs, what should we do?
 });
+
 
 mongoose.connect(MONGO_URI)
     .then(() => app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`)))
     .catch((err) => console.error('MongoDB connection error:', err));
-
 /**
  * Handles creating a new poll, based on the data provided to the server
  * 
@@ -200,34 +288,26 @@ mongoose.connect(MONGO_URI)
  * @param {[answer: string, votes: number]} pollOptions The various answers the poll allows and how many votes each answer should start with
  * @returns {string?} An error message if an error occurs, or null if no error occurs.
  */
-async function onCreateNewPoll(question, pollOptions) {
+async function onCreateNewPoll(question, pollOptions, userId) {
     try {
-        //TODO: Save the new poll to MongoDB
-    }
-    catch (error) {
-        console.error(error);
+        //Save poll to MongoDB
+        const newPoll = new Poll({
+            question,
+            options: pollOptions,  
+            voters: [],            
+            createdBy: userId      
+        });
+        await newPoll.save();
+        //Create poll render for all users
+        connectedClients.forEach(client => {
+            client.send(JSON.stringify({
+                type: 'newPoll',
+                poll: newPoll
+            }));
+        });
+        return null;
+    } catch (error) {
+        console.error("Error creating poll:", error);
         return "Error creating the poll, please try again";
-    }
-
-    //TODO: Tell all connected sockets that a new poll was added
-
-    return null;
-}
-
-/**
- * Handles processing a new vote on a poll
- * 
- * This function isn't necessary and should be removed if it's not used, but it's left as a hint to try and help give
- * an idea of how you might want to handle incoming votes
- * 
- * @param {string} pollId The ID of the poll that was voted on
- * @param {string} selectedOption Which option the user voted for
- */
-async function onNewVote(pollId, selectedOption) {
-    try {
-        
-    }
-    catch (error) {
-        console.error('Error updating poll:', error);
     }
 }
